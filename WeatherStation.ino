@@ -328,8 +328,8 @@ bool read_lightning(readings *data)
 		uint8_t lightning_dist_km = lightning0.AS3935_GetLightningDistKm();
 		uint32_t lightning_energy = lightning0.AS3935_GetStrikeEnergyRaw();
 
-		data->lightning_distance = lightning_dist_km;
-		data->lightning_energy = lightning_energy;
+		data->lightning_distance = (uint32_t)lightning_dist_km;
+		data->lightning_energy = (uint32_t)lightning_energy;
 
 		Serial.print(F("read_lightning() : Lightning detected! Distance to strike: "));
 		Serial.print(lightning_dist_km);
@@ -412,6 +412,8 @@ bool write_sensors(ble_info *bleinfo, readings *data, DateTime ts, bool new_hour
 	setChar(bleinfo->wind_direction_10m_gust_id, unixtime, (int32_t)(data->wind_direction_gust_10m * 22500));
 	setChar(bleinfo->solar_voltage_id, unixtime, (int32_t)(data->solar_voltage));
 	setChar(bleinfo->solar_current_id, unixtime, (int32_t)(data->solar_current));
+	setChar(bleinfo->input_voltage_id, unixtime, (int32_t)(data->input_voltage));
+	setChar(bleinfo->status_id, unixtime, (int32_t)(data->status));
 
 	if(new_hour)
 	{
@@ -428,6 +430,8 @@ bool write_sensors(ble_info *bleinfo, readings *data, DateTime ts, bool new_hour
 
 bool read_sensors(readings *data)
 {
+	data->input_voltage = read_battery();
+
 	data->battery_voltage = (battery.voltageLevel() * 1000);
 	data->battery_soc = (battery.fuelLevel() * 1000);
 
@@ -546,6 +550,9 @@ void print_sensors(readings *data)
 	Serial.print(F("Solar Current           = "));
 	Serial.print(data->solar_current);
 	Serial.println(F(" uA"));
+	Serial.print(F("Input Voltage           = "));
+	Serial.print(data->input_voltage);
+	Serial.println(F(" mV"));
 	Serial.print(F("Wind speed              = "));
 	Serial.print(data->wind_speed);
 	Serial.println(F(" mph"));
@@ -826,19 +833,21 @@ void setup_bluetooth_le(ble_info *bleinfo)
 	bleinfo->solar_current_id = setup_bluetooth_char(solar_current_char_UUID);
 	bleinfo->lightning_distance_id = setup_bluetooth_char(lightning_distance_char_UUID);
 	bleinfo->lightning_energy_id = setup_bluetooth_char(lightning_energy_char_UUID);
+	bleinfo->input_voltage_id = setup_bluetooth_char(input_voltage_char_UUID);
+	bleinfo->status_id = setup_bluetooth_char(status_char_UUID);
 		
-	bleinfo->time_id = gatt.addCharacteristic(timeCharUUID, 
-	                                          GATT_CHARS_PROPERTIES_NOTIFY | GATT_CHARS_PROPERTIES_READ, 
-	                                          4, 4, BLE_DATATYPE_BYTEARRAY);
-  	if(bleinfo->time_id == 0) {
-  	    error(F("Could not add characteristic"));
-  	}
-	bleinfo->time_cmd_id = gatt.addCharacteristic(timeCmdCharUUID, 
-	                                              GATT_CHARS_PROPERTIES_WRITE | GATT_CHARS_PROPERTIES_READ, 
-	                                              4, 4, BLE_DATATYPE_BYTEARRAY);
-  	if(bleinfo->time_cmd_id == 0) {
-  	    error(F("Could not add characteristic"));
-  	}
+	//bleinfo->time_id = gatt.addCharacteristic(timeCharUUID, 
+	//                                          GATT_CHARS_PROPERTIES_NOTIFY | GATT_CHARS_PROPERTIES_READ, 
+	//                                          4, 4, BLE_DATATYPE_BYTEARRAY);
+  	//if(bleinfo->time_id == 0) {
+  	//    error(F("Could not add characteristic"));
+  	//}
+	//bleinfo->time_cmd_id = gatt.addCharacteristic(timeCmdCharUUID, 
+	//                                              GATT_CHARS_PROPERTIES_WRITE | GATT_CHARS_PROPERTIES_READ, 
+	//                                              4, 4, BLE_DATATYPE_BYTEARRAY);
+  	//if(bleinfo->time_cmd_id == 0) {
+  	//    error(F("Could not add characteristic"));
+  	//}
 		
 	ble.reset();
 }
