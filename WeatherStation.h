@@ -73,6 +73,11 @@
 #define WIND_ADC_DELTA          5
 
 #define SENSOR_UPDATE_PERIOD    1
+
+#define MQTT_CONNECTION_NAME    "wsmqtt"
+#define OTA_CONNECTION_NAME     "ws_ota"
+
+#define WATCHDOG_TIME           8000
 	
 
 // Stored arrays 
@@ -114,80 +119,6 @@ const char * const cardinal_points[] PROGMEM = {_cardinal_point_0, _cardinal_poi
                                                 _cardinal_point_12, _cardinal_point_13,
                                                 _cardinal_point_14, _cardinal_point_15};
   
-// 
-// Service UUID Definitions
-//
-
-// UUID 5a9049c1-9815-454d-a674-c48cd0275582
-uint8_t dataServiceUUID[]   =       { 0x5a, 0x90, 0x49, 0xc1, 0x98, 0x15, 0x45, 0x4d, 
-                                      0xa6, 0x74, 0xc4, 0x8c, 0xd0, 0x27, 0x55, 0x82 };
-// 5d67af3f-b46e-4836-abfa-f7bffab6bceb
-uint8_t timeServiceUUID[] =          { 0x5d, 0x67, 0xaf, 0x3f, 0xb4, 0x6e, 0x48, 0x36,
-                                       0xab, 0xfa, 0xf7, 0xbf, 0xfa, 0xb6, 0xbc, 0xeb};
-// 
-// BLE Character UUIDs
-//
-uint16_t battery_char_UUID =                 0x1001;                                       
-uint16_t temperature_char_UUID =             0x1002;
-uint16_t humidity_char_UUID =                0x1003;
-uint16_t pressure_char_UUID =                0x1004;
-uint16_t vis_light_char_UUID =               0x1005;
-uint16_t ir_light_char_UUID =                0x1006;
-uint16_t uv_index_char_UUID =                0x1007;
-uint16_t wind_speed_char_UUID =              0x1008;
-uint16_t wind_direction_char_UUID =          0x1009;
-uint16_t rain_hour_char_UUID =               0x1010;
-uint16_t rain_day_char_UUID =                0x1011;
-uint16_t rain_char_UUID =                    0x1012;
-uint16_t rain_hour_once_char_UUID =          0x1013;
-uint16_t rain_day_once_char_UUID =           0x1014;
-uint16_t dew_point_char_UUID =               0x1015;
-uint16_t wind_speed_2m_ave_char_UUID =       0x1016;
-uint16_t wind_direction_2m_ave_char_UUID =   0x1017;
-uint16_t wind_speed_10m_gust_char_UUID =     0x1018;
-uint16_t wind_direction_10m_gust_char_UUID = 0x1019;
-uint16_t solar_voltage_char_UUID =           0x1020;
-uint16_t solar_current_char_UUID =           0x1021;
-uint16_t battery_soc_char_UUID =             0x1022;
-uint16_t lightning_distance_char_UUID =      0x1023;
-uint16_t lightning_energy_char_UUID =        0x1024;
-uint16_t input_voltage_char_UUID    =        0x1025;
-uint16_t status_char_UUID =                  0x1026;
-//uint16_t timeCharUUID =                      0x2000;
-uint16_t timeCmdCharUUID =                   0x2001;
-
-
-struct ble_info {
-	int32_t battery_id;
-	int32_t temperature_id;
-	int32_t humidity_id;
-	int32_t pressure_id;
-	int32_t vis_light_id;
-	int32_t ir_light_id;
-	int32_t uv_index_id;
-	int32_t wind_speed_id;
-	int32_t wind_direction_id;
-	int32_t rain_hour_id;
-	int32_t rain_hour_once_id;
-	int32_t rain_day_id;
-	int32_t rain_day_once_id;
-	int32_t rain_id;
-	int32_t dew_point_id;
-	int32_t wind_speed_2m_ave_id;
-	int32_t wind_direction_2m_ave_id;
-	int32_t wind_speed_10m_gust_id;
-	int32_t wind_direction_10m_gust_id;
-  int32_t time_id;
-  int32_t time_cmd_id;
-  int32_t solar_voltage_id;
-  int32_t solar_current_id;
-  int32_t battery_soc_id;
-  int32_t lightning_distance_id;
-  int32_t lightning_energy_id;
-  int32_t input_voltage_id;
-  int32_t status_id;
-};
-
 struct readings {
   uint32_t status;
   int8_t wind_direction;

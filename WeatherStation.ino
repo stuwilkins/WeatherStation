@@ -19,26 +19,24 @@
 #include <Wire.h>
 #include <SPI.h>
 
-#include <Adafruit_ATParser.h>
-#include <Adafruit_BluefruitLE_SPI.h>
-#include <Adafruit_BLEMIDI.h>
-#include <Adafruit_BLEBattery.h>
-#include <Adafruit_BLEGatt.h>
-#include <Adafruit_BLEEddystone.h>
-#include <Adafruit_BLE.h>
-#include <Adafruit_BluefruitLE_UART.h>
+#include <WiFi101.h>
+#include <WiFi101OTA.h>
+#include "Adafruit_MQTT.h"
+#include "Adafruit_MQTT_Client.h"
+
 #include <Adafruit_SI1145.h>
 #include <Adafruit_Sensor.h>
 #include <Adafruit_BME280.h>
 #include <Adafruit_INA219.h>
 #include <Adafruit_SleepyDog.h>
+
 #include <MAX17043GU.h>
 #include <RTClib.h>
 #include <PWFusion_AS3935.h>
 #include <math.h>
 
 #include "WeatherStation.h"
-#include "battery.h"
+#include "auth.h"
 
 // Global Variables	
 
@@ -70,32 +68,71 @@ int16_t last_hour = -1;
 int32_t wind_direction_total = 0;
 int32_t wind_direction_n = 0;
 
-// ADC Values for wind direction
-
 // Hardware definitions
 
 Adafruit_BME280 bme;
 Adafruit_SI1145 uv;
 MAX17043GU battery;
 Adafruit_INA219 ina219;
-RTC_DS3231 rtc;
-PWF_AS3935 lightning0(AS3935_CS, AS3935_IRQ, AS3935_SI);
+//PWF_AS3935 lightning0(AS3935_CS, AS3935_IRQ, AS3935_SI);
 
-Adafruit_BluefruitLE_SPI ble(BLUEFRUIT_SPI_CS, BLUEFRUIT_SPI_IRQ, BLUEFRUIT_SPI_RST);
-Adafruit_BLEGatt  gatt = Adafruit_BLEGatt(ble);
+#ifndef SOFTWARE_RTC
+	RTC_DS3231 rtc;
+#else
+	RTC_Millis rtc;
+#endif
 
-ble_info bleinfo;
 readings data;
+
+// MQTT Setup
+WiFiClient wifi_client;
+Adafruit_MQTT_Client mqtt_client(&wifi_client, "192.168.1.2", 1883, "", "");
+
+WiFiServer wifi_server(8000);
+
+Adafruit_MQTT_Publish mqtt_battery = Adafruit_MQTT_Publish(&mqtt_client, "homeauto/weather/battery");
+Adafruit_MQTT_Publish mqtt_temperature = Adafruit_MQTT_Publish(&mqtt_client, "homeauto/weather/weather");
+Adafruit_MQTT_Publish mqtt_humidity = Adafruit_MQTT_Publish(&mqtt_client, "homeauto/weather/humidity");
+Adafruit_MQTT_Publish mqtt_pressure = Adafruit_MQTT_Publish(&mqtt_client, "homeauto/weather/pressure");
+Adafruit_MQTT_Publish mqtt_vis_light = Adafruit_MQTT_Publish(&mqtt_client, "homeauto/weather/vis_light");
+Adafruit_MQTT_Publish mqtt_ir_light = Adafruit_MQTT_Publish(&mqtt_client, "homeauto/weather/ir_light");
+Adafruit_MQTT_Publish mqtt_uv_index = Adafruit_MQTT_Publish(&mqtt_client, "homeauto/weather/uv_index");
+Adafruit_MQTT_Publish mqtt_wind_speed = Adafruit_MQTT_Publish(&mqtt_client, "homeauto/weather/wind_speed");
+Adafruit_MQTT_Publish mqtt_wind_direction = Adafruit_MQTT_Publish(&mqtt_client, "homeauto/weather/wind_direction");
+Adafruit_MQTT_Publish mqtt_rain_hour = Adafruit_MQTT_Publish(&mqtt_client, "homeauto/weather/rain_hour");
+Adafruit_MQTT_Publish mqtt_rain_hour_once = Adafruit_MQTT_Publish(&mqtt_client, "homeauto/weather/rain_hour_once");
+Adafruit_MQTT_Publish mqtt_rain_day = Adafruit_MQTT_Publish(&mqtt_client, "homeauto/weather/rain_day");
+Adafruit_MQTT_Publish mqtt_rain_day_once = Adafruit_MQTT_Publish(&mqtt_client, "homeauto/weather/rain_day_once");
+Adafruit_MQTT_Publish mqtt_rain = Adafruit_MQTT_Publish(&mqtt_client, "homeauto/weather/rain");
+Adafruit_MQTT_Publish mqtt_dew_point = Adafruit_MQTT_Publish(&mqtt_client, "homeauto/weather/dew_point");
+Adafruit_MQTT_Publish mqtt_wind_speed_2m_ave = Adafruit_MQTT_Publish(&mqtt_client, "homeauto/weather/wind_speed_2m_ave");
+Adafruit_MQTT_Publish mqtt_wind_direction_2m_ave = Adafruit_MQTT_Publish(&mqtt_client, "homeauto/weather/wind_direction_2m_ave");
+Adafruit_MQTT_Publish mqtt_wind_speed_10m_gust = Adafruit_MQTT_Publish(&mqtt_client, "homeauto/weather/wind_speed_10m_gust");
+Adafruit_MQTT_Publish mqtt_wind_direction_10m_gust = Adafruit_MQTT_Publish(&mqtt_client, "homeauto/weather/wind_direction_10m_gust");
+Adafruit_MQTT_Publish mqtt_solar_voltage = Adafruit_MQTT_Publish(&mqtt_client, "homeauto/weather/solar_voltage");
+Adafruit_MQTT_Publish mqtt_solar_current = Adafruit_MQTT_Publish(&mqtt_client, "homeauto/weather/solar_current");
+Adafruit_MQTT_Publish mqtt_battery_soc = Adafruit_MQTT_Publish(&mqtt_client, "homeauto/weather/battery_soc");
+Adafruit_MQTT_Publish mqtt_lightning_distance = Adafruit_MQTT_Publish(&mqtt_client, "homeauto/weather/lightning_distance");
+Adafruit_MQTT_Publish mqtt_lightning_energy = Adafruit_MQTT_Publish(&mqtt_client, "homeauto/weather/lightning_energy");
+Adafruit_MQTT_Publish mqtt_input_voltage = Adafruit_MQTT_Publish(&mqtt_client, "homeauto/weather/input_voltage");
+Adafruit_MQTT_Publish mqtt_status = Adafruit_MQTT_Publish(&mqtt_client, "homeauto/weather/status");
+Adafruit_MQTT_Publish mqtt_signal = Adafruit_MQTT_Publish(&mqtt_client, "homeauto/weather/signal");
+
+// IP Address Configure
+
+IPAddress wifi_ip(192,168,1,19);
+IPAddress wifi_mask(255,255,255,0);
+IPAddress wifi_gateway(192,168,1,1);
 
 // Error handler 
 
 void error(const __FlashStringHelper *err) {
-  Serial.println(err);
-  while(1)
-  {
-    digitalWrite(BUILTIN_LED_IO, !digitalRead(BUILTIN_LED_IO));
-    delay(100);
-  }
+	Serial.println(err);
+	while(1)
+	{
+		digitalWrite(BUILTIN_LED_IO, !digitalRead(BUILTIN_LED_IO));
+		delay(100);
+	}
 }
 
 // ISR Routines for wind and rain sensors
@@ -107,10 +144,10 @@ void lightning_ISR()
 
 void wind_speed_ISR()
 {
-	if (millis() - wind_last > 10)
-	{
-		wind_last = millis();
-		wind_clicks++;
+if (millis() - wind_last > 10)
+{
+	wind_last = millis();
+	wind_clicks++;
 	}
 }
 
@@ -133,8 +170,8 @@ void rainfall_ISR()
 void setup_lightning(void)
 {
 	lightning_irq = false;
-	lightning0.AS3935_DefInit();
-	lightning0.AS3935_ManualCal(AS3935_CAPACITANCE, AS3935_OUTDOORS, AS3935_DIST_EN);
+	//lightning0.AS3935_DefInit();
+	//lightning0.AS3935_ManualCal(AS3935_CAPACITANCE, AS3935_OUTDOORS, AS3935_DIST_EN);
 }
 
 // Setup Routine
@@ -187,12 +224,6 @@ void setup() {
 	// Setup lightning
 	setup_lightning();
 
-	// Setup bluetooth
-
-	Serial.println(F("Setup bluetooth ...."));
-	setup_bluetooth();
-	setup_bluetooth_le(&bleinfo);
-
 	// Setup RTC
 	Serial.println(F("Setup clock ...."));
 	setup_clock();
@@ -202,17 +233,26 @@ void setup() {
 	setup_i2c_sensors();
 
 
-	int countdownMS = Watchdog.enable(5000);
-	Serial.print("Enabled the watchdog with max countdown of ");
-	Serial.print(countdownMS, DEC);
-	Serial.println(" milliseconds!");
-	Serial.println();
-
 	Serial.println("Setting up interrupt handlers ...");
 
 	attachInterrupt(digitalPinToInterrupt(ANEMOMETER_IO), wind_speed_ISR, FALLING);	
 	attachInterrupt(digitalPinToInterrupt(RAIN_IO), rainfall_ISR, FALLING);	
 	attachInterrupt(digitalPinToInterrupt(AS3935_IRQ), lightning_ISR, RISING);	
+
+	int countdownMS = Watchdog.enable(WATCHDOG_TIME);
+	Serial.print("Enabled the watchdog with max countdown of ");
+	Serial.print(countdownMS, DEC);
+	Serial.println(" milliseconds!");
+	Serial.println();
+
+	// Setup WIFI
+
+	Serial.println(F("Setup WIFI ...."));
+	setup_wifi();
+	wifi_connect();
+
+	Serial.println(F("Setup MQTT ...."));
+	mqtt_connect();
 
 	Serial.println("Finished setup .....");
 
@@ -227,6 +267,17 @@ void loop() {
 
 	unsigned long start_millis = millis();
 
+	// pet the dog!
+	Watchdog.reset();
+
+	// Do WIFI and MQTT Connection
+	wifi_connect();
+	mqtt_connect();
+	
+	// Poll for over the air updates
+	WiFiOTA.poll();
+
+	// pet the dog!
 	Watchdog.reset();
 
 	DateTime now = rtc.now();
@@ -275,16 +326,18 @@ void loop() {
 	if(lightning_irq)
 	{
 		lightning_irq = false;
-		if(read_lightning(&data))
-		{
-			write_lightning(&bleinfo, &data, now);	
-		}
+		//if(read_lightning(&data))
+		//{
+		//	write_lightning(&data, now);	
+		//}
 	}
 
 	if(new_second || new_day || new_hour || new_minute)
 	{
+		print_clock(&now);
+		
 		// Lets take windspeed and direction
-		Serial.println("New Second .... ");
+		Serial.print("New Second .... ");
 		Serial.print(this_minute);
 		Serial.print(" ");
 		Serial.print(this_2minute);
@@ -298,7 +351,7 @@ void loop() {
 		print_sensors(&data);
 		if(((now.second() % 2) == 0) || new_hour || new_day)
 		{
-			write_sensors(&bleinfo, &data, now, new_hour, new_day);
+			write_sensors(&data, now, new_hour, new_day);
 			digitalWrite(BUILTIN_LED_IO, !digitalRead(BUILTIN_LED_IO));
 		}
 	}
@@ -315,41 +368,41 @@ void loop() {
 	}
 }
 
-bool read_lightning(readings *data)
-{
-	uint8_t int_src = lightning0.AS3935_GetInterruptSrc();
-	if(0 == int_src)
-	{
-		Serial.println(F("read_lightning() : interrupt source result not expected"));
-		return false;
-	}
-	else if(1 == int_src)
-	{
-		uint8_t lightning_dist_km = lightning0.AS3935_GetLightningDistKm();
-		uint32_t lightning_energy = lightning0.AS3935_GetStrikeEnergyRaw();
-
-		data->lightning_distance = (uint32_t)lightning_dist_km;
-		data->lightning_energy = (uint32_t)lightning_energy;
-
-		Serial.print(F("read_lightning() : Lightning detected! Distance to strike: "));
-		Serial.print(lightning_dist_km);
-		Serial.println(F(" kilometers"));
-
-		return true;
-	}
-	else if(2 == int_src)
-	{
-		data->lightning_distance = 0;
-		data->lightning_energy = 0;
-		Serial.println(F("read_lightning() : Disturber detected"));
-		return false;
-	}
-	else if(3 == int_src)
-	{
-		Serial.println(F("read_lightning() : Noise level too high"));
-		return false;
-	}
-}
+//bool read_lightning(readings *data)
+//{
+//	uint8_t int_src = lightning0.AS3935_GetInterruptSrc();
+//	if(0 == int_src)
+//	{
+//		Serial.println(F("read_lightning() : interrupt source result not expected"));
+//		return false;
+//	}
+//	else if(1 == int_src)
+//	{
+//		uint8_t lightning_dist_km = lightning0.AS3935_GetLightningDistKm();
+//		uint32_t lightning_energy = lightning0.AS3935_GetStrikeEnergyRaw();
+//
+//		data->lightning_distance = (uint32_t)lightning_dist_km;
+//		data->lightning_energy = (uint32_t)lightning_energy;
+//
+//		Serial.print(F("read_lightning() : Lightning detected! Distance to strike: "));
+//		Serial.print(lightning_dist_km);
+//		Serial.println(F(" kilometers"));
+//
+//		return true;
+//	}
+//	else if(2 == int_src)
+//	{
+//		data->lightning_distance = 0;
+//		data->lightning_energy = 0;
+//		Serial.println(F("read_lightning() : Disturber detected"));
+//		return false;
+//	}
+//	else if(3 == int_src)
+//	{
+//		Serial.println(F("read_lightning() : Noise level too high"));
+//		return false;
+//	}
+//}
 
 uint32_t compute_rain_hour(void)
 {
@@ -377,52 +430,53 @@ uint32_t compute_rain(void)
 	return rain;
 }
 
-bool write_lightning(ble_info *bleinfo, readings *data, DateTime ts)
+bool write_lightning(readings *data, DateTime ts)
 {
 	Serial.println("write_lightning()");
 
 	uint32_t unixtime = ts.unixtime();
-	setChar(bleinfo->lightning_distance_id, unixtime, (int32_t)data->lightning_distance);
-	setChar(bleinfo->lightning_energy_id, unixtime, (int32_t)data->lightning_energy);
+	mqtt_publish_data(&mqtt_lightning_distance, unixtime, (int32_t)data->lightning_distance);
+	mqtt_publish_data(&mqtt_lightning_energy, unixtime, (int32_t)data->lightning_energy);
 		
 	return true;
 }
 
-bool write_sensors(ble_info *bleinfo, readings *data, DateTime ts, bool new_hour, bool new_day)
+bool write_sensors(readings *data, DateTime ts, bool new_hour, bool new_day)
 {
 	Serial.println("write_sensors()");
 
 	uint32_t unixtime = ts.unixtime();
-	setChar(bleinfo->battery_id, unixtime, (int32_t)data->battery_voltage);
-	setChar(bleinfo->battery_soc_id, unixtime, (int32_t)data->battery_soc);
-	setChar(bleinfo->temperature_id, unixtime, (int32_t)(data->temperature * 1000));
-	setChar(bleinfo->humidity_id, unixtime, (int32_t)(data->humidity * 1000));
-	setChar(bleinfo->pressure_id, unixtime, (int32_t)(data->pressure * 10));
-	setChar(bleinfo->uv_index_id, unixtime, (int32_t)(data->uv_index));
-	setChar(bleinfo->vis_light_id, unixtime, (int32_t)data->vis_light);
-	setChar(bleinfo->ir_light_id, unixtime, (int32_t)data->ir_light);
-	setChar(bleinfo->wind_speed_id, unixtime, (int32_t)(data->wind_speed));
-	setChar(bleinfo->wind_direction_id, unixtime, (int32_t)(data->wind_direction * 22500));
-	setChar(bleinfo->rain_hour_id, unixtime, (int32_t)data->rain_hour);
-	setChar(bleinfo->rain_day_id, unixtime, (int32_t)data->rain_day);
-	setChar(bleinfo->dew_point_id, unixtime, (int32_t)(data->dew_point * 1000));
-	setChar(bleinfo->wind_direction_2m_ave_id, unixtime, (int32_t)(data->wind_direction_2m_ave * 1000));
-	setChar(bleinfo->wind_speed_2m_ave_id, unixtime, (int32_t)(data->wind_speed_2m_ave));
-	setChar(bleinfo->wind_speed_10m_gust_id, unixtime, (int32_t)(data->wind_speed_gust_10m));
-	setChar(bleinfo->wind_direction_10m_gust_id, unixtime, (int32_t)(data->wind_direction_gust_10m * 22500));
-	setChar(bleinfo->solar_voltage_id, unixtime, (int32_t)(data->solar_voltage));
-	setChar(bleinfo->solar_current_id, unixtime, (int32_t)(data->solar_current));
-	setChar(bleinfo->input_voltage_id, unixtime, (int32_t)(data->input_voltage));
-	setChar(bleinfo->status_id, unixtime, (int32_t)(data->status));
+	mqtt_publish_data(&mqtt_battery, unixtime, (int32_t)data->battery_voltage);
+	mqtt_publish_data(&mqtt_battery_soc, unixtime, (int32_t)data->battery_soc);
+	mqtt_publish_data(&mqtt_temperature, unixtime, (int32_t)(data->temperature * 1000));
+	mqtt_publish_data(&mqtt_humidity, unixtime, (int32_t)(data->humidity * 1000));
+	mqtt_publish_data(&mqtt_pressure, unixtime, (int32_t)(data->pressure * 10));
+	mqtt_publish_data(&mqtt_uv_index, unixtime, (int32_t)(data->uv_index));
+	mqtt_publish_data(&mqtt_vis_light, unixtime, (int32_t)data->vis_light);
+	mqtt_publish_data(&mqtt_ir_light, unixtime, (int32_t)data->ir_light);
+	mqtt_publish_data(&mqtt_wind_speed, unixtime, (int32_t)(data->wind_speed));
+	mqtt_publish_data(&mqtt_wind_direction, unixtime, (int32_t)(data->wind_direction * 22500));
+	mqtt_publish_data(&mqtt_rain_hour, unixtime, (int32_t)data->rain_hour);
+	mqtt_publish_data(&mqtt_rain_day, unixtime, (int32_t)data->rain_day);
+	mqtt_publish_data(&mqtt_dew_point, unixtime, (int32_t)(data->dew_point * 1000));
+	mqtt_publish_data(&mqtt_wind_direction_2m_ave, unixtime, (int32_t)(data->wind_direction_2m_ave * 1000));
+	mqtt_publish_data(&mqtt_wind_speed_2m_ave, unixtime, (int32_t)(data->wind_speed_2m_ave));
+	mqtt_publish_data(&mqtt_wind_speed_10m_gust, unixtime, (int32_t)(data->wind_speed_gust_10m));
+	mqtt_publish_data(&mqtt_wind_direction_10m_gust, unixtime, (int32_t)(data->wind_direction_gust_10m * 22500));
+	mqtt_publish_data(&mqtt_solar_voltage, unixtime, (int32_t)(data->solar_voltage));
+	mqtt_publish_data(&mqtt_solar_current, unixtime, (int32_t)(data->solar_current));
+	mqtt_publish_data(&mqtt_input_voltage, unixtime, (int32_t)(data->input_voltage));
+	mqtt_publish_data(&mqtt_status, unixtime, (int32_t)(data->status));
+	mqtt_publish_data(&mqtt_signal, unixtime, (int32_t)(WiFi.RSSI()));
 
 	if(new_hour)
 	{
-		setChar(bleinfo->rain_hour_once_id, unixtime, (int32_t)data->rain_hour);
+		mqtt_publish_data(&mqtt_rain_hour_once, unixtime, (int32_t)data->rain_hour);
 	}
 
 	if(new_day)
 	{
-		setChar(bleinfo->rain_day_once_id, unixtime, (int32_t)data->rain_day);
+		mqtt_publish_data(&mqtt_rain_day_once, unixtime, (int32_t)data->rain_day);
 	}
 
 	return true;
@@ -613,8 +667,10 @@ void print_sensors(readings *data)
 bool setup_clock(void)
 {
 #ifdef SOFTWARE_RTC
+	Serial.println(F("**** Using software RTC ****"));
 	rtc.begin(DateTime(F(__DATE__), F(__TIME__)));
 #else
+	Serial.println(F("Using hardware RTC"));
 	if(!rtc.begin()) {
 		Serial.println("Error!");
 		error(F("Couldn't find RTC"));
@@ -758,101 +814,108 @@ uint32_t read_battery(void)
 }
 
 
-void setup_bluetooth(void)
+void setup_wifi(void)
 {
-    if (!ble.begin(VERBOSE_MODE))
-    {
-        error(F("Couldn't find Bluefruit\n"));
-    }
-  
-    if (! ble.factoryReset() ){
-        error(F("Couldn't factory reset\n"));
-    }
-  
-    // Disable command echo from Bluefruit
-    ble.echo(false);
-    ble.verbose(false);
-  
-    // Set name of device
-    if (!ble.sendCommandCheckOK(F("AT+GAPDEVNAME=Weather Station")))
-    {
-        error(F("Could not set device name."));
-    }
-  
-    if (!ble.sendCommandCheckOK(F("AT+BLEPOWERLEVEL=4")))
-    {
-        error(F("Could not set output power"));
-    }
-  
-    if (!ble.sendCommandCheckOK(F("AT+HWMODELED=SPI")) )
-	{
-        error(F("Could not set led output"));
-    }
-}
 
-int32_t setup_bluetooth_char(uint16_t uuid)
-{
-	int32_t	id = gatt.addCharacteristic(uuid, GATT_CHARS_PROPERTIES_NOTIFY | GATT_CHARS_PROPERTIES_READ, 
-										8, 8, BLE_DATATYPE_BYTEARRAY);
-  	if (id == 0) {
-  	    error(F("Could not add characteristic"));
-  	}
-	return id;
-}
+	WiFi.setPins(8,7,4,2);
+	if (WiFi.status() == WL_NO_SHIELD) {
+		error(F("WiFi module not present"));
+	}
+	//WiFi.config(wifi_ip, wifi_gateway, wifi_gateway, wifi_mask);
+
+	Watchdog.reset();
+	Serial.println(F("Waiting 5s for descovery of networks"));
+	delay(5000);
 	
-void setup_bluetooth_le(ble_info *bleinfo)
-{
-                               
-	int32_t environmentServiceId = gatt.addService(dataServiceUUID);
-  	if(!environmentServiceId)
-  	{
-  	    error(F("Could not add data service"));
-  	}
+	Watchdog.reset();
+	wifi_list_networks();
 
-	bleinfo->battery_id = setup_bluetooth_char(battery_char_UUID);
-	bleinfo->battery_soc_id = setup_bluetooth_char(battery_soc_char_UUID);
-	bleinfo->temperature_id = setup_bluetooth_char(temperature_char_UUID);
-	bleinfo->humidity_id = setup_bluetooth_char(humidity_char_UUID);
-	bleinfo->pressure_id = setup_bluetooth_char(pressure_char_UUID);
-	bleinfo->vis_light_id = setup_bluetooth_char(vis_light_char_UUID);
-	bleinfo->ir_light_id = setup_bluetooth_char(ir_light_char_UUID);
-	bleinfo->uv_index_id = setup_bluetooth_char(uv_index_char_UUID);
-	bleinfo->wind_speed_id = setup_bluetooth_char(wind_speed_char_UUID);
-	bleinfo->wind_direction_id = setup_bluetooth_char(wind_direction_char_UUID);
-	bleinfo->rain_hour_id = setup_bluetooth_char(rain_hour_char_UUID);
-	bleinfo->rain_day_id = setup_bluetooth_char(rain_day_char_UUID);
-	bleinfo->rain_id = setup_bluetooth_char(rain_char_UUID);
-	bleinfo->rain_hour_once_id = setup_bluetooth_char(rain_hour_once_char_UUID);
-	bleinfo->rain_day_once_id = setup_bluetooth_char(rain_day_once_char_UUID);
-	bleinfo->dew_point_id = setup_bluetooth_char(dew_point_char_UUID);
-	bleinfo->wind_speed_2m_ave_id = setup_bluetooth_char(wind_speed_2m_ave_char_UUID);
-	bleinfo->wind_direction_2m_ave_id = setup_bluetooth_char(wind_direction_2m_ave_char_UUID);
-	bleinfo->wind_speed_10m_gust_id = setup_bluetooth_char(wind_speed_10m_gust_char_UUID);
-	bleinfo->wind_direction_10m_gust_id = setup_bluetooth_char(wind_direction_10m_gust_char_UUID);
-	bleinfo->solar_voltage_id = setup_bluetooth_char(solar_voltage_char_UUID);
-	bleinfo->solar_current_id = setup_bluetooth_char(solar_current_char_UUID);
-	bleinfo->lightning_distance_id = setup_bluetooth_char(lightning_distance_char_UUID);
-	bleinfo->lightning_energy_id = setup_bluetooth_char(lightning_energy_char_UUID);
-	bleinfo->input_voltage_id = setup_bluetooth_char(input_voltage_char_UUID);
-	bleinfo->status_id = setup_bluetooth_char(status_char_UUID);
-		
-	//bleinfo->time_id = gatt.addCharacteristic(timeCharUUID, 
-	//                                          GATT_CHARS_PROPERTIES_NOTIFY | GATT_CHARS_PROPERTIES_READ, 
-	//                                          4, 4, BLE_DATATYPE_BYTEARRAY);
-  	//if(bleinfo->time_id == 0) {
-  	//    error(F("Could not add characteristic"));
-  	//}
-	//bleinfo->time_cmd_id = gatt.addCharacteristic(timeCmdCharUUID, 
-	//                                              GATT_CHARS_PROPERTIES_WRITE | GATT_CHARS_PROPERTIES_READ, 
-	//                                              4, 4, BLE_DATATYPE_BYTEARRAY);
-  	//if(bleinfo->time_cmd_id == 0) {
-  	//    error(F("Could not add characteristic"));
-  	//}
-		
-	ble.reset();
+	Watchdog.reset();
 }
 
-void setChar(int32_t gattID, uint32_t timestamp, int32_t val)
+void wifi_connect() {
+
+	if(WiFi.status() == WL_CONNECTED)
+	{
+		return;
+	}
+
+	Watchdog.disable();
+
+	int tries = 50;
+	while(WiFi.status() != WL_CONNECTED)
+	{
+		Serial.print(F("Attempting to connect to WPA SSID: "));
+		Serial.println(wifi_ssid);
+		WiFi.begin(wifi_ssid, wifi_password);
+		if(--tries == 0)
+		{
+			Serial.println(F("Enabling watchdog"));
+			Watchdog.enable(WATCHDOG_TIME);
+		}
+	}
+	
+	Serial.println(F("Waiting 10s for WIFI to connect"));
+	delay(10000);
+
+	// start the WiFi OTA library with SD based storage
+	Serial.println(F("Setup OTA Programming ....."));
+	WiFiOTA.begin(OTA_CONNECTION_NAME, ota_password, InternalStorage);
+
+	// Start telnet port server
+	wifi_server.begin();
+
+	// Re-enable the watchdog
+	Watchdog.enable(WATCHDOG_TIME);
+}
+
+void mqtt_connect() {
+
+	if(mqtt_client.connected())
+	{
+		return;
+	} else {
+		mqtt_client.disconnect();
+	}
+
+	Serial.println(F("Connecting to MQTT Server ....."));
+
+	int ping_result;
+	while(WiFi.ping(mqtt_server) < 0)
+	{
+		Serial.println("Waiting to ping server....");
+		delay(1000);
+	}
+
+	Watchdog.disable();
+	int8_t ret;
+	int tries = 50;
+	while((ret = mqtt_client.connect()) != 0) { // connect will return 0 for connected
+		Serial.println(mqtt_client.connectErrorString(ret));
+		Serial.print("Retrying MQTT connection ... tries = ");
+		Serial.println(tries);
+		mqtt_client.disconnect();
+
+		// Check if WiFi Is connected.
+		if(WiFi.status() != WL_CONNECTED)
+		{
+			// We need to start WiFi
+			wifi_connect();
+			Watchdog.disable();
+		}
+		if(--tries == 0)
+		{
+			Serial.println(F("Enabling watchdog"));
+			Watchdog.enable(WATCHDOG_TIME);
+		}
+	}
+
+	Serial.println("MQTT Connected!");
+	// Re-enable the watchdog
+	Watchdog.enable(WATCHDOG_TIME);
+}
+
+void mqtt_publish_data(Adafruit_MQTT_Publish *pub, uint32_t timestamp, int32_t val)
 {
     uint8_t _val[8];
 
@@ -866,7 +929,7 @@ void setChar(int32_t gattID, uint32_t timestamp, int32_t val)
     _val[2] = (timestamp >> 8) & 0xFF;
     _val[3] = timestamp & 0xFF;
 
-    gatt.setChar(gattID, _val, 8);
+    pub->publish(_val, 8);
 }
 
 double calculate_dew_point(double RH, double T)
@@ -914,3 +977,25 @@ float mean_mitsuta(int8_t *bearing, int N)
 
 	return sum;
 }	
+
+void wifi_list_networks() {
+	// scan for nearby networks:
+	Serial.println("** Scan Networks **");
+	byte numSsid = WiFi.scanNetworks();
+
+	// print the list of networks seen:
+	Serial.print("number of available networks:");
+	Serial.println(numSsid);
+
+	// print the network number and name for each network found:
+	for (int thisNet = 0; thisNet<numSsid; thisNet++) {
+		Serial.print(thisNet);
+		Serial.print(") ");
+		Serial.print(WiFi.SSID(thisNet));
+		Serial.print("\tSignal: ");
+		Serial.print(WiFi.RSSI(thisNet));
+		Serial.print(" dBm");
+		Serial.print("\tEncryption: ");
+		Serial.println(WiFi.encryptionType(thisNet));
+	}
+}
