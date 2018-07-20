@@ -61,12 +61,9 @@ int update_counter;
 // Global variables to keep track of accumulations.
 
 uint8_t current_minute = 0;	
-int16_t last_day = -1;
-int16_t last_minute = -1;
-int16_t last_second = -1;
-int16_t last_hour = -1;
 int32_t wind_direction_total = 0;
 int32_t wind_direction_n = 0;
+DateTime last;
 
 // Hardware definitions
 
@@ -90,33 +87,33 @@ Adafruit_MQTT_Client mqtt_client(&wifi_client, "192.168.1.2", 1883, "", "");
 
 WiFiServer wifi_server(8000);
 
-Adafruit_MQTT_Publish mqtt_battery = Adafruit_MQTT_Publish(&mqtt_client, "homeauto/weather/battery");
-Adafruit_MQTT_Publish mqtt_temperature = Adafruit_MQTT_Publish(&mqtt_client, "homeauto/weather/weather");
-Adafruit_MQTT_Publish mqtt_humidity = Adafruit_MQTT_Publish(&mqtt_client, "homeauto/weather/humidity");
-Adafruit_MQTT_Publish mqtt_pressure = Adafruit_MQTT_Publish(&mqtt_client, "homeauto/weather/pressure");
-Adafruit_MQTT_Publish mqtt_vis_light = Adafruit_MQTT_Publish(&mqtt_client, "homeauto/weather/vis_light");
-Adafruit_MQTT_Publish mqtt_ir_light = Adafruit_MQTT_Publish(&mqtt_client, "homeauto/weather/ir_light");
-Adafruit_MQTT_Publish mqtt_uv_index = Adafruit_MQTT_Publish(&mqtt_client, "homeauto/weather/uv_index");
-Adafruit_MQTT_Publish mqtt_wind_speed = Adafruit_MQTT_Publish(&mqtt_client, "homeauto/weather/wind_speed");
-Adafruit_MQTT_Publish mqtt_wind_direction = Adafruit_MQTT_Publish(&mqtt_client, "homeauto/weather/wind_direction");
-Adafruit_MQTT_Publish mqtt_rain_hour = Adafruit_MQTT_Publish(&mqtt_client, "homeauto/weather/rain_hour");
-Adafruit_MQTT_Publish mqtt_rain_hour_once = Adafruit_MQTT_Publish(&mqtt_client, "homeauto/weather/rain_hour_once");
-Adafruit_MQTT_Publish mqtt_rain_day = Adafruit_MQTT_Publish(&mqtt_client, "homeauto/weather/rain_day");
-Adafruit_MQTT_Publish mqtt_rain_day_once = Adafruit_MQTT_Publish(&mqtt_client, "homeauto/weather/rain_day_once");
-Adafruit_MQTT_Publish mqtt_rain = Adafruit_MQTT_Publish(&mqtt_client, "homeauto/weather/rain");
-Adafruit_MQTT_Publish mqtt_dew_point = Adafruit_MQTT_Publish(&mqtt_client, "homeauto/weather/dew_point");
-Adafruit_MQTT_Publish mqtt_wind_speed_2m_ave = Adafruit_MQTT_Publish(&mqtt_client, "homeauto/weather/wind_speed_2m_ave");
-Adafruit_MQTT_Publish mqtt_wind_direction_2m_ave = Adafruit_MQTT_Publish(&mqtt_client, "homeauto/weather/wind_direction_2m_ave");
-Adafruit_MQTT_Publish mqtt_wind_speed_10m_gust = Adafruit_MQTT_Publish(&mqtt_client, "homeauto/weather/wind_speed_10m_gust");
-Adafruit_MQTT_Publish mqtt_wind_direction_10m_gust = Adafruit_MQTT_Publish(&mqtt_client, "homeauto/weather/wind_direction_10m_gust");
-Adafruit_MQTT_Publish mqtt_solar_voltage = Adafruit_MQTT_Publish(&mqtt_client, "homeauto/weather/solar_voltage");
-Adafruit_MQTT_Publish mqtt_solar_current = Adafruit_MQTT_Publish(&mqtt_client, "homeauto/weather/solar_current");
-Adafruit_MQTT_Publish mqtt_battery_soc = Adafruit_MQTT_Publish(&mqtt_client, "homeauto/weather/battery_soc");
-Adafruit_MQTT_Publish mqtt_lightning_distance = Adafruit_MQTT_Publish(&mqtt_client, "homeauto/weather/lightning_distance");
-Adafruit_MQTT_Publish mqtt_lightning_energy = Adafruit_MQTT_Publish(&mqtt_client, "homeauto/weather/lightning_energy");
-Adafruit_MQTT_Publish mqtt_input_voltage = Adafruit_MQTT_Publish(&mqtt_client, "homeauto/weather/input_voltage");
-Adafruit_MQTT_Publish mqtt_status = Adafruit_MQTT_Publish(&mqtt_client, "homeauto/weather/status");
-Adafruit_MQTT_Publish mqtt_signal = Adafruit_MQTT_Publish(&mqtt_client, "homeauto/weather/signal");
+Adafruit_MQTT_Publish mqtt_battery = Adafruit_MQTT_Publish(&mqtt_client, "homeauto/weather/battery", MQTT_QOS_1);
+Adafruit_MQTT_Publish mqtt_temperature = Adafruit_MQTT_Publish(&mqtt_client, "homeauto/weather/temperature", MQTT_QOS_1);
+Adafruit_MQTT_Publish mqtt_humidity = Adafruit_MQTT_Publish(&mqtt_client, "homeauto/weather/humidity", MQTT_QOS_1);
+Adafruit_MQTT_Publish mqtt_pressure = Adafruit_MQTT_Publish(&mqtt_client, "homeauto/weather/pressure", MQTT_QOS_1);
+Adafruit_MQTT_Publish mqtt_vis_light = Adafruit_MQTT_Publish(&mqtt_client, "homeauto/weather/vis_light", MQTT_QOS_1);
+Adafruit_MQTT_Publish mqtt_ir_light = Adafruit_MQTT_Publish(&mqtt_client, "homeauto/weather/ir_light", MQTT_QOS_1);
+Adafruit_MQTT_Publish mqtt_uv_index = Adafruit_MQTT_Publish(&mqtt_client, "homeauto/weather/uv_index", MQTT_QOS_1);
+Adafruit_MQTT_Publish mqtt_wind_speed = Adafruit_MQTT_Publish(&mqtt_client, "homeauto/weather/wind_speed", MQTT_QOS_1);
+Adafruit_MQTT_Publish mqtt_wind_direction = Adafruit_MQTT_Publish(&mqtt_client, "homeauto/weather/wind_direction", MQTT_QOS_1);
+Adafruit_MQTT_Publish mqtt_rain_hour = Adafruit_MQTT_Publish(&mqtt_client, "homeauto/weather/rain_hour", MQTT_QOS_1);
+Adafruit_MQTT_Publish mqtt_rain_hour_once = Adafruit_MQTT_Publish(&mqtt_client, "homeauto/weather/rain_hour_once", MQTT_QOS_1);
+Adafruit_MQTT_Publish mqtt_rain_day = Adafruit_MQTT_Publish(&mqtt_client, "homeauto/weather/rain_day", MQTT_QOS_1);
+Adafruit_MQTT_Publish mqtt_rain_day_once = Adafruit_MQTT_Publish(&mqtt_client, "homeauto/weather/rain_day_once", MQTT_QOS_1);
+Adafruit_MQTT_Publish mqtt_rain = Adafruit_MQTT_Publish(&mqtt_client, "homeauto/weather/rain", MQTT_QOS_1);
+Adafruit_MQTT_Publish mqtt_dew_point = Adafruit_MQTT_Publish(&mqtt_client, "homeauto/weather/dew_point", MQTT_QOS_1);
+Adafruit_MQTT_Publish mqtt_wind_speed_2m_ave = Adafruit_MQTT_Publish(&mqtt_client, "homeauto/weather/wind_speed_2m_ave", MQTT_QOS_1);
+Adafruit_MQTT_Publish mqtt_wind_direction_2m_ave = Adafruit_MQTT_Publish(&mqtt_client, "homeauto/weather/wind_direction_2m_ave", MQTT_QOS_1);
+Adafruit_MQTT_Publish mqtt_wind_speed_10m_gust = Adafruit_MQTT_Publish(&mqtt_client, "homeauto/weather/wind_speed_10m_gust", MQTT_QOS_1);
+Adafruit_MQTT_Publish mqtt_wind_direction_10m_gust = Adafruit_MQTT_Publish(&mqtt_client, "homeauto/weather/wind_direction_10m_gust", MQTT_QOS_1);
+Adafruit_MQTT_Publish mqtt_solar_voltage = Adafruit_MQTT_Publish(&mqtt_client, "homeauto/weather/solar_voltage", MQTT_QOS_1);
+Adafruit_MQTT_Publish mqtt_solar_current = Adafruit_MQTT_Publish(&mqtt_client, "homeauto/weather/solar_current", MQTT_QOS_1);
+Adafruit_MQTT_Publish mqtt_battery_soc = Adafruit_MQTT_Publish(&mqtt_client, "homeauto/weather/battery_soc", MQTT_QOS_1);
+Adafruit_MQTT_Publish mqtt_lightning_distance = Adafruit_MQTT_Publish(&mqtt_client, "homeauto/weather/lightning_distance", MQTT_QOS_1);
+Adafruit_MQTT_Publish mqtt_lightning_energy = Adafruit_MQTT_Publish(&mqtt_client, "homeauto/weather/lightning_energy", MQTT_QOS_1);
+Adafruit_MQTT_Publish mqtt_input_voltage = Adafruit_MQTT_Publish(&mqtt_client, "homeauto/weather/input_voltage", MQTT_QOS_1);
+Adafruit_MQTT_Publish mqtt_status = Adafruit_MQTT_Publish(&mqtt_client, "homeauto/weather/status", MQTT_QOS_1);
+Adafruit_MQTT_Publish mqtt_signal = Adafruit_MQTT_Publish(&mqtt_client, "homeauto/weather/signal", MQTT_QOS_1);
 
 // IP Address Configure
 
@@ -288,7 +285,7 @@ void loop() {
 	this_10minute = (now.minute() % 6) * 60;
 	this_10minute += now.second();
 
-	if((last_hour == (UTC_TIME_OFFSET - 1)) && 
+	if((last.hour() == (UTC_TIME_OFFSET - 1)) && 
 	   (now.hour() == UTC_TIME_OFFSET))
 	{
 		// New Day!
@@ -297,7 +294,7 @@ void loop() {
 		Serial.println("New Day .... ");
 	}
 
-	if(last_minute < now.minute())
+	if(last.minute() < now.minute())
 	{
 		// New Minute
 		new_minute = true;
@@ -305,14 +302,14 @@ void loop() {
 		Serial.println("New Minute .... ");
 	}
 
-	if(last_hour < now.hour())
+	if(last.hour() < now.hour())
 	{
 		// New Hour!
 		new_hour = true;	
 		Serial.println("New Hour .... ");
 	}
 
-	if(last_second < now.second())
+	if(last.second() < now.second())
 	{
 		// New Second !
 		new_second = true;
@@ -332,7 +329,10 @@ void loop() {
 		//}
 	}
 
-	if(new_second || new_day || new_hour || new_minute)
+	if( new_second ||
+		new_day || 
+		new_hour || 
+		new_minute)
 	{
 		print_clock(&now);
 		
@@ -349,17 +349,14 @@ void loop() {
 		read_wind(&data, this_2minute, 120, this_10minute, 600);
 		calculate_sensors(&data);
 		print_sensors(&data);
-		if(((now.second() % 2) == 0) || new_hour || new_day)
+		if((now.second() % 5) == 0)
 		{
 			write_sensors(&data, now, new_hour, new_day);
 			digitalWrite(BUILTIN_LED_IO, !digitalRead(BUILTIN_LED_IO));
 		}
 	}
 	
-	last_minute = now.minute();
-	last_day = now.day();
-	last_hour = now.hour();
-	last_second = now.second();
+	last = now;
 
 	if(new_second)
 	{
@@ -662,6 +659,9 @@ void print_sensors(readings *data)
 	Serial.print(F("Wind Direction 10m gust = "));
 	Serial.print(data->wind_direction_gust_10m);
 	Serial.println(F(" "));
+	Serial.print(F("Signal Strength         = "));
+	Serial.print(WiFi.RSSI());
+	Serial.println(F(" dBm"));
 }
 
 bool setup_clock(void)
@@ -822,6 +822,7 @@ void setup_wifi(void)
 		error(F("WiFi module not present"));
 	}
 	//WiFi.config(wifi_ip, wifi_gateway, wifi_gateway, wifi_mask);
+	WiFi.lowPowerMode();
 
 	Watchdog.reset();
 	Serial.println(F("Waiting 5s for descovery of networks"));
@@ -853,6 +854,7 @@ void wifi_connect() {
 			Serial.println(F("Enabling watchdog"));
 			Watchdog.enable(WATCHDOG_TIME);
 		}
+		delay(5000);
 	}
 	
 	Serial.println(F("Waiting 10s for WIFI to connect"));
@@ -880,13 +882,6 @@ void mqtt_connect() {
 
 	Serial.println(F("Connecting to MQTT Server ....."));
 
-	int ping_result;
-	while(WiFi.ping(mqtt_server) < 0)
-	{
-		Serial.println("Waiting to ping server....");
-		delay(1000);
-	}
-
 	Watchdog.disable();
 	int8_t ret;
 	int tries = 50;
@@ -908,6 +903,8 @@ void mqtt_connect() {
 			Serial.println(F("Enabling watchdog"));
 			Watchdog.enable(WATCHDOG_TIME);
 		}
+
+		delay(10000);
 	}
 
 	Serial.println("MQTT Connected!");

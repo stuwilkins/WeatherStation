@@ -28,9 +28,6 @@
 #define SOLAR_CHARGER_DONE             6
 #define BUFSIZE                        128
 #define VERBOSE_MODE                   true
-#define BLUEFRUIT_SPI_CS               8
-#define BLUEFRUIT_SPI_IRQ              7
-#define BLUEFRUIT_SPI_RST              4
 #define MAX17043_ADDRESS               0x36
 #define AS3935_CS                      19
 #define AS3935_IRQ                     18
