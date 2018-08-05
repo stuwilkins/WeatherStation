@@ -2,3 +2,4 @@
 ~*
 *.swo
 auth.h
+build*

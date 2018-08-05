@@ -71,11 +71,14 @@
 
 #define SENSOR_UPDATE_PERIOD    1
 
-#define MQTT_CONNECTION_NAME    "wsmqtt"
-#define OTA_CONNECTION_NAME     "ws_ota"
+#define MQTT_CONNECTION_NAME    "weather_station"
+#define OTA_CONNECTION_NAME     "weather_station_ota"
 
 #define WATCHDOG_TIME           8000
 	
+#define MQTT_SERVER                         "192.168.1.2"
+#define MQTT_PORT                           1883
+#define MQTT_CLIENT_NAME                    "weather_station"
 
 // Stored arrays 
 
@@ -129,12 +132,14 @@ struct readings {
   unsigned long wind_speed_2m_ave;
   unsigned long wind_speed_10m_ave[600];
   unsigned long wind_speed_gust_10m;
+  float pressure_3hr[180];
   uint32_t battery_voltage;
   uint32_t battery_soc;
   int32_t solar_voltage;
   int32_t solar_current;
   float temperature;
   float pressure;
+  uint8_t pressure_trend;
   float humidity;
   float dew_point;
   uint16_t vis_light;
@@ -147,3 +152,43 @@ struct readings {
   uint32_t lightning_energy;
   uint32_t input_voltage;
 };
+
+enum PressureTrend {
+  PRESSURE_RAPIDLY_RISING = 3,
+  PRESSURE_RAPIDLY_FALLING = 4,
+  PRESSURE_STEADY = 0,
+  PRESSURE_FALLING = 2,
+  PRESSURE_RISING = 1
+};
+
+void lightning_ISR();
+void wind_speed_ISR();
+void rainfall_ISR();
+void setup_lightning(void);
+uint32_t compute_rain_hour(void);
+uint32_t compute_rain_day(void);
+uint32_t compute_rain(void);
+bool write_lightning(readings *data, DateTime ts);
+bool write_sensors(readings *data, DateTime ts, bool new_minute, bool new_hour, bool new_day);
+bool read_sensors(readings *data);
+bool calculate_sensors(readings *data);
+bool read_wind(readings *data, int cur_2m, int n, int cur_10m, int m);
+void print_sensors(readings *data);
+bool setup_clock(void);
+bool setup_i2c_sensors(void);
+void get_wind_speed(unsigned long *clicks, unsigned long *delta);
+int16_t get_wind_direction(void);
+uint16_t average_analog_read(int pin);
+void print_clock(DateTime *t);
+uint32_t read_battery(void);
+void setup_wifi(void);
+void wifi_connect();
+void mqtt_connect();
+void mqtt_publish_data(const char *pub, uint32_t timestamp, int32_t val, int persist);
+double calculate_dew_point(double RH, double T);
+float mean_mitsuta(int8_t *bearing, int N);
+void wifi_list_networks();
+void mqtt_callback(char* topic, byte* payload, unsigned int length);
+
+
+
