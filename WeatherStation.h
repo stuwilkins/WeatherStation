@@ -29,12 +29,15 @@
 #define BUFSIZE                        128
 #define VERBOSE_MODE                   true
 #define MAX17043_ADDRESS               0x36
-#define AS3935_CS                      19
-#define AS3935_IRQ                     18
-#define AS3935_SI                      17
+#define AS3935_IRQ                     19
 #define AS3935_CAPACITANCE             80 
 #define AS3935_OUTDOORS                0
 #define AS3935_DIST_EN                 1
+#define AS3935_ADD                     0x03
+
+// EEPROM Memory Locations
+#define EEPROM_PRESSURE                0
+#define EEPROM_RAIN                    740
 
 // Calibration constants
 
@@ -49,7 +52,6 @@
 // Wind direction values for ADC
 // { 66, 84, 93, 127, 184, 244, 287, 406, 461, 599, 630, 702, 785, 827, 886, 944};
 // { 5, 3, 4, 7, 6, 9, 8, 1, 2, 11, 10, 15, 0, 13, 14, 12 };
-
 
 #define WIND_ADC_5              66
 #define WIND_ADC_3              84
@@ -72,13 +74,16 @@
 #define SENSOR_UPDATE_PERIOD    1
 
 #define MQTT_CONNECTION_NAME    "weather_station"
-#define OTA_CONNECTION_NAME     "weather_station_ota"
 
 #define WATCHDOG_TIME           8000
 	
-#define MQTT_SERVER                         "192.168.1.2"
-#define MQTT_PORT                           1883
-#define MQTT_CLIENT_NAME                    "weather_station"
+#define MQTT_SERVER             "192.168.1.2"
+#define MQTT_PORT               1883
+#define MQTT_CLIENT_NAME        "weather_station"
+
+#define NTP_ADDRESS             "north-america.pool.ntp.org"
+#define NTP_OFFSET              -4 * 60 * 60 // In seconds
+#define NTP_INTERVAL            60 * 1000 // In miliseconds
 
 // Stored arrays 
 
@@ -132,7 +137,6 @@ struct readings {
   unsigned long wind_speed_2m_ave;
   unsigned long wind_speed_10m_ave[600];
   unsigned long wind_speed_gust_10m;
-  float pressure_3hr[180];
   uint32_t battery_voltage;
   uint32_t battery_soc;
   int32_t solar_voltage;
@@ -140,6 +144,7 @@ struct readings {
   float temperature;
   float pressure;
   uint8_t pressure_trend;
+  float pressure_trend_val;
   float humidity;
   float dew_point;
   uint16_t vis_light;
@@ -158,16 +163,15 @@ enum PressureTrend {
   PRESSURE_RAPIDLY_FALLING = 4,
   PRESSURE_STEADY = 0,
   PRESSURE_FALLING = 2,
-  PRESSURE_RISING = 1
+  PRESSURE_RISING = 1,
+  PRESSURE_NO_DATA = 5
 };
 
 void lightning_ISR();
 void wind_speed_ISR();
 void rainfall_ISR();
 void setup_lightning(void);
-uint32_t compute_rain_hour(void);
-uint32_t compute_rain_day(void);
-uint32_t compute_rain(void);
+void compute_rain(readings *data, int curr_min);
 bool write_lightning(readings *data, DateTime ts);
 bool write_sensors(readings *data, DateTime ts, bool new_minute, bool new_hour, bool new_day);
 bool read_sensors(readings *data);
@@ -189,6 +193,9 @@ double calculate_dew_point(double RH, double T);
 float mean_mitsuta(int8_t *bearing, int N);
 void wifi_list_networks();
 void mqtt_callback(char* topic, byte* payload, unsigned int length);
-
+bool read_lightning(readings *data);
+void set_clock(void);
+void eeprom_reset(void);
+bool calculate_pressure_trend(readings *data, int16_t this_3hr);
 
 

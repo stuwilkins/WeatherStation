@@ -3,3 +3,4 @@
 *.swo
 auth.h
 build*
+ota.passwd

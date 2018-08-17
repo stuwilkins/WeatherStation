@@ -22,6 +22,8 @@
 #include <WiFi101.h>
 #include <WiFi101OTA.h>
 #include <PubSubClient.h>
+#include <eeprom_i2c.h>
+#include <RemoteConsole.h>
 
 #include <Adafruit_SI1145.h>
 #include <Adafruit_Sensor.h>
@@ -31,8 +33,9 @@
 
 #include <MAX17043GU.h>
 #include <RTClib.h>
-//#include <PWFusion_AS3935.h>
+#include <PWFusion_AS3935_I2C.h>
 #include <math.h>
+#include <NTPClient.h>
 
 #include "WeatherStation.h"
 #include "auth.h"
@@ -41,15 +44,12 @@
 
 volatile unsigned long wind_last = 0;
 volatile unsigned long wind_clicks = 0;
-volatile bool lightning_irq = 0;
 unsigned long last_wind_check = 0;
 
 volatile uint32_t rain_time;
 volatile uint32_t rain_last;
 volatile uint32_t rain_interval;
-volatile uint32_t rain_total = 0;
-volatile uint32_t rain_day_total = 0;
-volatile uint32_t rain_hour_total[60];
+volatile uint16_t rain_total = 0;
 
 volatile int16_t this_minute = 0;
 volatile int16_t this_2minute = 0;
@@ -71,9 +71,14 @@ Adafruit_BME280 bme;
 Adafruit_SI1145 uv;
 MAX17043GU battery;
 Adafruit_INA219 ina219;
-//PWF_AS3935 lightning0(AS3935_CS, AS3935_IRQ, AS3935_SI);
-
+PWF_AS3935_I2C lightning0(AS3935_IRQ, AS3935_ADD);
+EEPROM_I2C eeprom = EEPROM_I2C(0x50);
 RTC_DS3231 rtc;
+RemoteConsole console(10000);
+WiFiUDP ntp_udp;
+NTPClient ntp_client(ntp_udp, NTP_ADDRESS, NTP_OFFSET, NTP_INTERVAL);
+
+// Data for storing sensor readings
 
 readings data;
 
@@ -94,6 +99,7 @@ static const char* mqtt_rain_hour               = "homeauto/weather/rain_hour";
 static const char* mqtt_rain_hour_once          = "homeauto/weather/rain_hour_once";
 static const char* mqtt_rain_day                = "homeauto/weather/rain_day";
 static const char* mqtt_rain_day_once           = "homeauto/weather/rain_day_once";
+static const char* mqtt_rain                    = "homeauto/weather/rain";
 static const char* mqtt_dew_point               = "homeauto/weather/dew_point";
 static const char* mqtt_wind_speed_2m_ave       = "homeauto/weather/wind_speed_2m_ave";
 static const char* mqtt_wind_direction_2m_ave   = "homeauto/weather/wind_direction_2m_ave";
@@ -109,14 +115,19 @@ static const char* mqtt_status                  = "homeauto/weather/status";
 static const char* mqtt_signal                  = "homeauto/weather/signal";
 static const char* mqtt_loop_time               = "homeauto/weather/loop_time";
 static const char* mqtt_pressure_trend          = "homeauto/weather/pressure_trend";
+static const char* mqtt_pressure_trend_val      = "homeauto/weather/pressure_trend_val";
 
 static const char* mqtt_wifi_power_sp           = "homeauto/weather/wifi_power_sp";
-static const char* mqtt_subscribe[]             = {mqtt_wifi_power_sp, 0};
+static const char* mqtt_eeprom_reset_sp         = "homeauto/weather/eeprom_reset_sp";
+static const char* mqtt_reset_sp                = "homeauto/weather/reset_sp";
+static const char* mqtt_subscribe[]             = {mqtt_wifi_power_sp, 
+                                                   mqtt_reset_sp, 
+												   mqtt_eeprom_reset_sp, 0};
 
 // Error handler 
 
 void error(const __FlashStringHelper *err) {
-	Serial.println(err);
+	console.println(err);
 	while(1)
 	{
 		digitalWrite(BUILTIN_LED_IO, !digitalRead(BUILTIN_LED_IO));
@@ -126,17 +137,12 @@ void error(const __FlashStringHelper *err) {
 
 // ISR Routines for wind and rain sensors
 
-void lightning_ISR()
-{
-	lightning_irq = true;
-}
-
 void wind_speed_ISR()
 {
-if (millis() - wind_last > 10)
-{
-	wind_last = millis();
-	wind_clicks++;
+	if (millis() - wind_last > 10)
+	{
+		wind_last = millis();
+		wind_clicks++;
 	}
 }
 
@@ -148,8 +154,6 @@ void rainfall_ISR()
 	if(rain_interval > 10)
 	{
 		rain_total++;
-		rain_day_total++;
-		rain_hour_total[this_minute]++;
 		rain_last = rain_time;
 	}
 }
@@ -158,16 +162,14 @@ void rainfall_ISR()
 
 void setup_lightning(void)
 {
-	lightning_irq = false;
-	//lightning0.AS3935_DefInit();
-	//lightning0.AS3935_ManualCal(AS3935_CAPACITANCE, AS3935_OUTDOORS, AS3935_DIST_EN);
+	lightning0.begin();
+	lightning0.AS3935_ManualCal(AS3935_CAPACITANCE, AS3935_OUTDOORS, AS3935_DIST_EN);
 }
 
 // Setup Routine
 
 void setup() {
 
-	Serial.begin(115200);
 
 	pinMode(ANEMOMETER_IO, INPUT_PULLUP);
 	pinMode(RAIN_IO, INPUT_PULLUP);
@@ -175,24 +177,33 @@ void setup() {
 	pinMode(SOLAR_CHARGER_DONE, INPUT_PULLUP);
 	pinMode(BUILTIN_LED_IO, OUTPUT);
 
-	for(int i=0;i<10;i++)
-	{
-		digitalWrite(BUILTIN_LED_IO, 1);
-		delay(500);
-		digitalWrite(BUILTIN_LED_IO, 0);
-		delay(500);
-	}
-
 	digitalWrite(BUILTIN_LED_IO, 1);
-	
+
+	console.begin(115200, 0);
+
+	Watchdog.enable(WATCHDOG_TIME);
+
+	// Setup WIFI
+
+	console.println(F("Setup WIFI ...."));
+	setup_wifi();
+	wifi_connect();
+	console.connect();
+	Watchdog.reset();
+
+	console.print(F("Setup MQTT ...."));
+	console.print(MQTT_SERVER);
+	console.print(F(" "));
+	console.println(MQTT_PORT);
+	mqtt_client.setServer(MQTT_SERVER, MQTT_PORT);
+	mqtt_client.setCallback(mqtt_callback);
+	mqtt_connect();
+	Watchdog.reset();
+
 	// Setup wind speed and rain interrupts
 
 	rain_last = millis();
 	wind_last = millis();
-	for(int i=0;i<60;i++)
-	{
-		rain_hour_total[i] = 0;
-	}
 
 	// Setup wind accumulations
 	
@@ -208,55 +219,42 @@ void setup() {
 		data.wind_direction_10m_ave[i] = 0;
 	}
 
-	for(int i=0;i<180;i++)
-	{
-		data.pressure_3hr[i] = 0.0;
-	}
+	Watchdog.reset();
+
+	// Setup Rain
+	rain_total = 0;
+
+	// Setup eeprom
+	console.println(F("Setup eeprom ...."));
+	eeprom.begin();
+	Watchdog.reset();
 
 	update_counter = 0;
 
 	// Setup lightning
-	setup_lightning();
+	//setup_lightning();
 
 	// Setup RTC
-	Serial.println(F("Setup clock ...."));
+	console.println(F("Setup clock ...."));
 	setup_clock();
+	Watchdog.reset();
 
 	// Now setup sensors
-	Serial.println(F("Setup sensors ...."));
+	console.println(F("Setup sensors ...."));
 	setup_i2c_sensors();
+	Watchdog.reset();
 
-
-	Serial.println("Setting up interrupt handlers ...");
+	console.println("Setting up interrupt handlers ...");
 
 	attachInterrupt(digitalPinToInterrupt(ANEMOMETER_IO), wind_speed_ISR, FALLING);	
 	attachInterrupt(digitalPinToInterrupt(RAIN_IO), rainfall_ISR, FALLING);	
-	attachInterrupt(digitalPinToInterrupt(AS3935_IRQ), lightning_ISR, RISING);	
-
-	int countdownMS = Watchdog.enable(WATCHDOG_TIME);
-	Serial.print("Enabled the watchdog with max countdown of ");
-	Serial.print(countdownMS, DEC);
-	Serial.println(" milliseconds!");
-	Serial.println();
-
-	// Setup WIFI
-
-	Serial.println(F("Setup WIFI ...."));
-	setup_wifi();
-	wifi_connect();
 	Watchdog.reset();
 
-	Serial.print(F("Setup MQTT ...."));
-	Serial.print(MQTT_SERVER);
-	Serial.print(F(" "));
-	Serial.println(MQTT_PORT);
-	mqtt_client.setServer(MQTT_SERVER, MQTT_PORT);
-	mqtt_client.setCallback(mqtt_callback);
-	mqtt_connect();
+	console.println(F("Setting low power mode for WiFi ....."));
+	WiFi.lowPowerMode();
+
+	console.println(F("Finished setup ....."));
 	Watchdog.reset();
-
-	Serial.println("Finished setup .....");
-
 	digitalWrite(BUILTIN_LED_IO, 0);
 }
 
@@ -278,6 +276,12 @@ void loop() {
 	// Poll for over the air updates
 	WiFiOTA.poll();
 
+	// Poll for MQTT updates
+	mqtt_client.loop();
+
+	// Loop through the remote colsole....
+	console.loop();
+
 	// pet the dog!
 	Watchdog.reset();
 
@@ -291,48 +295,51 @@ void loop() {
 	this_3hr = (now.hour() % 3) * 60;
 	this_3hr += now.minute();
 
-	if((last.hour() == (UTC_TIME_OFFSET - 1)) && 
-	   (now.hour() == UTC_TIME_OFFSET))
+	if((now.hour() == 0) && (last.hour() != 0))
 	{
 		// New Day!
-		rain_day_total = 0;
 		new_day = true;
-		Serial.println("New Day .... ");
+		console.println("New Day .... ");
 	}
 
-	if(last.minute() < now.minute())
+	if(last.minute() != now.minute())
 	{
 		// New Minute
+		console.println("New Minute .... ");
+		console.print(F("Hour = "));
+		console.print(now.hour());
+		console.print(F(" Minute = "));
+		console.println(now.minute());
+
 		new_minute = true;
-		rain_hour_total[this_minute] = 0;
-		Serial.println("New Minute .... ");
+	
+		int day_minute = (now.hour() * 60) + now.minute();
+
+		int rc = eeprom.writeAndVerify(EEPROM_RAIN + (day_minute * sizeof(rain_total)), 
+				          			  (uint8_t *)(&rain_total), sizeof(rain_total));
+		if(rc)
+		{
+			console.print(F("Could not write rain data rc = "));
+			console.println(rc);
+		}
+
+		rain_total = 0;
+
+		compute_rain(&data, day_minute);
 	}
 
-	if(last.hour() < now.hour())
+	if(last.hour() != now.hour())
 	{
 		// New Hour!
 		new_hour = true;	
-		Serial.println("New Hour .... ");
+		console.println("New Hour .... ");
 	}
 
-	if(last.second() < now.second())
+	if(last.second() != now.second())
 	{
 		// New Second !
 		new_second = true;
-		Serial.println("New Second .... ");
-	}
-
-
-	// Setup the time from last update
-
-	// Check for lightning interrupt
-	if(lightning_irq)
-	{
-		lightning_irq = false;
-		//if(read_lightning(&data))
-		//{
-		//	write_lightning(&data, now);	
-		//}
+		console.println("New Second .... ");
 	}
 
 	if( new_second ||
@@ -348,45 +355,16 @@ void loop() {
 
 		if(new_minute)
 		{
-			// Do the pressure trend
-			data.pressure_3hr[this_3hr] = data.pressure;
-
-			DateTime start = now - TimeSpan(0, 3, 0, 0);
-			int16_t last_3hr = (start.hour() % 3) * 60;
-			last_3hr += start.minute();
-
-			float pressure_diff = data.pressure_3hr[this_3hr] - data.pressure_3hr[last_3hr];
-			if(pressure_diff >= 2)
-			{
-				data.pressure_trend = PRESSURE_RAPIDLY_RISING;
-			}
-
-			if((pressure_diff >= 1) && (pressure_diff < 2))
-			{
-				data.pressure_trend = PRESSURE_RISING;
-			} 
-			
-			if(abs(pressure_diff) < 1)
-			{
-				data.pressure_trend = PRESSURE_STEADY;
-			}
-
-			if((pressure_diff <= 1) && (pressure_diff > -2))
-			{
-				data.pressure_trend = PRESSURE_FALLING;
-			}
-
-			if(pressure_diff <= -2) 
-			{
-				data.pressure_trend = PRESSURE_RAPIDLY_FALLING;
-			}
-			
+			calculate_pressure_trend(&data, this_3hr);	
 		}
 
 		if(((now.second() % 2) == 0) || new_minute || new_hour || new_day)
 		{
+			unsigned long loop_time = millis() - start_millis;
 			write_sensors(&data, now, new_minute, new_hour, new_day);
-			mqtt_publish_data(mqtt_loop_time, now.unixtime(), (int32_t)(millis() - start_millis), 0);
+			mqtt_publish_data(mqtt_loop_time, now.unixtime() - NTP_OFFSET, (int32_t)loop_time, 0);
+			console.print(F("Tick tock .... "));
+			console.println(loop_time);
 		}
 
 		digitalWrite(BUILTIN_LED_IO, !digitalRead(BUILTIN_LED_IO));
@@ -395,73 +373,153 @@ void loop() {
 	last = now;
 }
 
-//bool read_lightning(readings *data)
-//{
-//	uint8_t int_src = lightning0.AS3935_GetInterruptSrc();
-//	if(0 == int_src)
-//	{
-//		Serial.println(F("read_lightning() : interrupt source result not expected"));
-//		return false;
-//	}
-//	else if(1 == int_src)
-//	{
-//		uint8_t lightning_dist_km = lightning0.AS3935_GetLightningDistKm();
-//		uint32_t lightning_energy = lightning0.AS3935_GetStrikeEnergyRaw();
-//
-//		data->lightning_distance = (uint32_t)lightning_dist_km;
-//		data->lightning_energy = (uint32_t)lightning_energy;
-//
-//		Serial.print(F("read_lightning() : Lightning detected! Distance to strike: "));
-//		Serial.print(lightning_dist_km);
-//		Serial.println(F(" kilometers"));
-//
-//		return true;
-//	}
-//	else if(2 == int_src)
-//	{
-//		data->lightning_distance = 0;
-//		data->lightning_energy = 0;
-//		Serial.println(F("read_lightning() : Disturber detected"));
-//		return false;
-//	}
-//	else if(3 == int_src)
-//	{
-//		Serial.println(F("read_lightning() : Noise level too high"));
-//		return false;
-//	}
-//}
-
-uint32_t compute_rain_hour(void)
+bool calculate_pressure_trend(readings *data, int16_t this_3hr)
 {
-	// Compute the hourly rainfall
-	uint32_t rain = 0;
-	for(int i=0;i<60;i++)
+	// Do the pressure trend
+	eeprom.writeAndVerify(EEPROM_PRESSURE + (this_3hr * sizeof(float)),
+			(uint8_t*)(&data->pressure), sizeof(float));
+
+	int16_t last_3hr = this_3hr + 1;
+	if(last_3hr >= 180)
 	{
-		rain += rain_hour_total[i];
+		last_3hr = 0;
 	}
-	rain *= RAIN_BUCKETS_TO_UM;
-	return rain;
+
+	float last_pressure;
+	eeprom.read(EEPROM_PRESSURE + (last_3hr * sizeof(float)),
+			(uint8_t *)(&last_pressure), sizeof(float));
+	float pressure_diff = data->pressure - last_pressure;
+
+	if(pressure_diff >= 200)
+	{
+		data->pressure_trend = PRESSURE_RAPIDLY_RISING;
+	}
+
+	if((pressure_diff >= 100) && (pressure_diff < 200))
+	{
+		data->pressure_trend = PRESSURE_RISING;
+	} 
+
+	if(abs(pressure_diff) < 100)
+	{
+		data->pressure_trend = PRESSURE_STEADY;
+	}
+
+	if((pressure_diff <= -100) && (pressure_diff > -200))
+	{
+		data->pressure_trend = PRESSURE_FALLING;
+	}
+
+	if(pressure_diff <= -200) 
+	{
+		data->pressure_trend = PRESSURE_RAPIDLY_FALLING;
+	}
+
+	if(pressure_diff >= 50000)
+	{
+		data->pressure_trend = PRESSURE_NO_DATA;
+	}
+
+	data->pressure_trend_val = pressure_diff;
+
+	return true;
 }
 
-uint32_t compute_rain_day(void)
+
+bool read_lightning(readings *data)
 {
-	// Compute the hourly rainfall
-	uint32_t rain = rain_day_total * RAIN_BUCKETS_TO_UM;
-	return rain;
+	uint8_t int_src = lightning0.AS3935_GetInterruptSrc();
+	if(0 == int_src)
+	{
+		console.println(F("read_lightning() : interrupt source result not expected"));
+		return false;
+	}
+	else if(1 == int_src)
+	{
+		uint8_t lightning_dist_km = lightning0.AS3935_GetLightningDistKm();
+		uint32_t lightning_energy = lightning0.AS3935_GetStrikeEnergyRaw();
+
+		data->lightning_distance = (uint32_t)lightning_dist_km;
+		data->lightning_energy = (uint32_t)lightning_energy;
+
+		console.print(F("read_lightning() : Lightning detected! Distance to strike: "));
+		console.print(lightning_dist_km);
+		console.println(F(" kilometers"));
+
+		return true;
+	}
+	else if(2 == int_src)
+	{
+		data->lightning_distance = 0;
+		data->lightning_energy = 0;
+		console.println(F("read_lightning() : Disturber detected"));
+		return false;
+	}
+	else if(3 == int_src)
+	{
+		console.println(F("read_lightning() : Noise level too high"));
+		return false;
+	}
+
+	return true;
 }
 
-uint32_t compute_rain(void)
+void compute_rain(readings *data, int curr_min)
 {
-	// Compute instantanious rain
-	uint32_t rain = rain_total * RAIN_BUCKETS_TO_UM;
-	return rain;
+	// Compute rainfall for day
+	uint32_t rain_day = 0;
+	uint32_t rain_hour = 0;
+	uint32_t rain = 0;
+
+	int hr_start = curr_min - 60;
+
+	console.println(F("compute_rain()"));
+	console.print(F("curr_min = "));
+	console.print(curr_min);
+	console.print(F(" hr_start = "));
+	console.println(hr_start);
+
+	for(int i=0;i<1440;i++)
+	{
+		uint16_t _rain;
+		eeprom.read(EEPROM_RAIN + (sizeof(_rain) * i),
+		            (uint8_t*)(&_rain), sizeof(_rain));
+
+		if(i <= curr_min)
+		{
+			rain_day += _rain;
+		}
+
+		if((i > hr_start) && (i <= curr_min)) 
+		{
+			rain_hour += _rain;
+			//console.print(F("Rain hr = "));
+			//console.println(i);
+		}
+
+		if(i == curr_min)
+		{
+			rain = _rain;
+		}
+
+		if(i > (hr_start + 1440))
+		{
+			//console.print(F("Rain hr (w) = "));
+			//console.println(i);
+			rain_hour += _rain;
+		}
+	}
+
+	data->rain_day = rain_day * RAIN_BUCKETS_TO_UM;
+	data->rain_hour = rain_hour * RAIN_BUCKETS_TO_UM;
+	data->rain = rain * RAIN_BUCKETS_TO_UM;
 }
 
 bool write_lightning(readings *data, DateTime ts)
 {
-	Serial.println("write_lightning()");
+	console.println("write_lightning()");
 
-	uint32_t unixtime = ts.unixtime();
+	uint32_t unixtime = ts.unixtime() - NTP_OFFSET;
 	mqtt_publish_data(mqtt_lightning_distance, unixtime, (int32_t)data->lightning_distance, 0);
 	mqtt_publish_data(mqtt_lightning_energy, unixtime, (int32_t)data->lightning_energy, 0);
 		
@@ -470,7 +528,7 @@ bool write_lightning(readings *data, DateTime ts)
 
 bool write_sensors(readings *data, DateTime ts, bool new_minute, bool new_hour, bool new_day)
 {
-	uint32_t unixtime = ts.unixtime();
+	uint32_t unixtime = ts.unixtime() - NTP_OFFSET;
 	mqtt_publish_data(mqtt_battery, unixtime, (int32_t)data->battery_voltage, 0);
 	mqtt_publish_data(mqtt_battery_soc, unixtime, (int32_t)data->battery_soc, 0);
 	mqtt_publish_data(mqtt_temperature, unixtime, (int32_t)(data->temperature * 1000), 0);
@@ -481,8 +539,6 @@ bool write_sensors(readings *data, DateTime ts, bool new_minute, bool new_hour, 
 	mqtt_publish_data(mqtt_ir_light, unixtime, (int32_t)data->ir_light, 0);
 	mqtt_publish_data(mqtt_wind_speed, unixtime, (int32_t)(data->wind_speed), 0);
 	mqtt_publish_data(mqtt_wind_direction, unixtime, (int32_t)(data->wind_direction * 22500), 0);
-	mqtt_publish_data(mqtt_rain_hour, unixtime, (int32_t)data->rain_hour, 0);
-	mqtt_publish_data(mqtt_rain_day, unixtime, (int32_t)data->rain_day, 0);
 	mqtt_publish_data(mqtt_dew_point, unixtime, (int32_t)(data->dew_point * 1000), 0);
 	mqtt_publish_data(mqtt_wind_direction_2m_ave, unixtime, (int32_t)(data->wind_direction_2m_ave * 1000), 0);
 	mqtt_publish_data(mqtt_wind_speed_2m_ave, unixtime, (int32_t)(data->wind_speed_2m_ave), 0);
@@ -507,6 +563,10 @@ bool write_sensors(readings *data, DateTime ts, bool new_minute, bool new_hour, 
 	if(new_minute)
 	{
 		mqtt_publish_data(mqtt_pressure_trend, unixtime, (int32_t)data->pressure_trend, 1);
+		mqtt_publish_data(mqtt_pressure_trend_val, unixtime, (int32_t)(data->pressure_trend_val * 10), 0);
+		mqtt_publish_data(mqtt_rain_day, unixtime, (int32_t)data->rain_day, 0);
+		mqtt_publish_data(mqtt_rain_hour, unixtime, (int32_t)data->rain_hour, 0);
+		mqtt_publish_data(mqtt_rain, unixtime, (int32_t)data->rain, 0);
 	}
 
 	return true;
@@ -542,10 +602,6 @@ bool read_sensors(readings *data)
 	data->ir_light = 0;
 	data->vis_light = 0;
 	data->uv_index = 0;
-
-	data->rain = compute_rain();
-	data->rain_hour = compute_rain_hour();
-	data->rain_day = compute_rain_day();
 
 	return true;
 }
@@ -620,99 +676,111 @@ bool read_wind(readings *data, int cur_2m, int n, int cur_10m, int m)
 
 void print_sensors(readings *data)
 {
-	Serial.print(F("Status                  = 0x"));
-	Serial.println(data->status, HEX);
-	Serial.print(F("Battery voltage         = "));
-	Serial.print(data->battery_voltage);
-	Serial.println(F(" mV"));
-	Serial.print(F("Battery SOC             = "));
-	Serial.print(data->battery_soc);
-	Serial.println(F(" %"));
-	Serial.print(F("Solar Voltage           = "));
-	Serial.print(data->solar_voltage);
-	Serial.println(F(" mV"));
-	Serial.print(F("Solar Current           = "));
-	Serial.print(data->solar_current);
-	Serial.println(F(" uA"));
-	Serial.print(F("Input Voltage           = "));
-	Serial.print(data->input_voltage);
-	Serial.println(F(" mV"));
-	Serial.print(F("Wind speed              = "));
-	Serial.print(data->wind_speed);
-	Serial.println(F(" mph"));
-	Serial.print(F("Wind direction          = "));
+	console.print(F("Status                  = 0x"));
+	console.println(data->status, HEX);
+	console.print(F("Battery voltage         = "));
+	console.print(data->battery_voltage);
+	console.println(F(" mV"));
+	console.print(F("Battery SOC             = "));
+	console.print(data->battery_soc);
+	console.println(F(" %"));
+	console.print(F("Solar Voltage           = "));
+	console.print(data->solar_voltage);
+	console.println(F(" mV"));
+	console.print(F("Solar Current           = "));
+	console.print(data->solar_current);
+	console.println(F(" uA"));
+	console.print(F("Input Voltage           = "));
+	console.print(data->input_voltage);
+	console.println(F(" mV"));
+	console.print(F("Wind speed              = "));
+	console.print(data->wind_speed);
+	console.println(F(" mph"));
+	console.print(F("Wind direction          = "));
 	if((data->wind_direction >= 0) && (data->wind_direction < 16))
 	{
-		Serial.print(cardinal_points[data->wind_direction]);
-		Serial.print(" ");
-		Serial.print(data->wind_direction * 22.5);
+		console.print(cardinal_points[data->wind_direction]);
+		console.print(" ");
+		console.print(data->wind_direction * 22.5);
 	} else {
-		Serial.print(F("ERROR"));
+		console.print(F("ERROR"));
 	}
-	Serial.println(F("	"));
-	Serial.print(F("Temperature             = "));
-	Serial.print(data->temperature);
-	Serial.println(F(" *C"));
-	Serial.print(F("Humidity                = "));
-	Serial.print(data->humidity);
-	Serial.println(F(" %"));
-	Serial.print(F("Dew point               = "));
-	Serial.print(data->dew_point);
-	Serial.println(F(" *C"));
-	Serial.print(F("Pressure                = "));
-	Serial.print(data->pressure);
-	Serial.println(F(" "));
-	Serial.print(F("UV Index                = "));
-	Serial.print(data->uv_index);
-	Serial.println(F(" "));
-	Serial.print(F("Visible light           = "));
-	Serial.print(data->vis_light);
-	Serial.println(F(" "));
-	Serial.print(F("IR Light                = "));
-	Serial.print(data->ir_light);
-	Serial.println(F(" "));
-	Serial.print(F("Rain                    = "));
-	Serial.print(data->rain);
-	Serial.println(F(" "));
-	Serial.print(F("Rain Hour               = "));
-	Serial.print(data->rain_hour);
-	Serial.println(F(" "));
-	Serial.print(F("Rain Day                = "));
-	Serial.print(data->rain_day);
-	Serial.println(F(" "));
-	Serial.print(F("Wind Speed 2m           = "));
-	Serial.print(data->wind_speed_2m_ave);
-	Serial.println(F(" "));
-	Serial.print(F("Wind Direction 2m       = "));
-	Serial.print(data->wind_direction_2m_ave);
-	Serial.println(F(" "));
-	Serial.print(F("Wind speed 10m gust     = "));
-	Serial.print(data->wind_speed_gust_10m);
-	Serial.println(F(" "));
-	Serial.print(F("Wind Direction 10m gust = "));
-	Serial.print(data->wind_direction_gust_10m);
-	Serial.println(F(" "));
-	Serial.print(F("Signal Strength         = "));
-	Serial.print(WiFi.RSSI());
-	Serial.println(F(" dBm"));
+	console.println(F("	"));
+	console.print(F("Temperature             = "));
+	console.print(data->temperature);
+	console.println(F(" *C"));
+	console.print(F("Humidity                = "));
+	console.print(data->humidity);
+	console.println(F(" %"));
+	console.print(F("Dew point               = "));
+	console.print(data->dew_point);
+	console.println(F(" *C"));
+	console.print(F("Pressure                = "));
+	console.print(data->pressure);
+	console.println(F(" "));
+	console.print(F("UV Index                = "));
+	console.print(data->uv_index);
+	console.println(F(" "));
+	console.print(F("Visible light           = "));
+	console.print(data->vis_light);
+	console.println(F(" "));
+	console.print(F("IR Light                = "));
+	console.print(data->ir_light);
+	console.println(F(" "));
+	console.print(F("Rain                    = "));
+	console.print(data->rain);
+	console.println(F(" "));
+	console.print(F("Rain Hour               = "));
+	console.print(data->rain_hour);
+	console.println(F(" "));
+	console.print(F("Rain Day                = "));
+	console.print(data->rain_day);
+	console.println(F(" "));
+	console.print(F("Wind Speed 2m           = "));
+	console.print(data->wind_speed_2m_ave);
+	console.println(F(" "));
+	console.print(F("Wind Direction 2m       = "));
+	console.print(data->wind_direction_2m_ave);
+	console.println(F(" "));
+	console.print(F("Wind speed 10m gust     = "));
+	console.print(data->wind_speed_gust_10m);
+	console.println(F(" "));
+	console.print(F("Wind Direction 10m gust = "));
+	console.print(data->wind_direction_gust_10m);
+	console.println(F(" "));
+	console.print(F("Signal Strength         = "));
+	console.print(WiFi.RSSI());
+	console.println(F(" dBm"));
 }
 
 bool setup_clock(void)
 {
-	Serial.println(F("Using hardware RTC"));
 	if(!rtc.begin()) {
-		Serial.println("Error!");
 		error(F("Couldn't find RTC"));
 	}
 
-	if (rtc.lostPower()) {
-		Serial.println(F("RTC lost power, setting time from compilation time of sketch."));
-		// following line sets the RTC to the date & time this sketch was compiled
-		DateTime compile_time = DateTime(F(__DATE__), F(__TIME__));
-		rtc.adjust(compile_time + TimeSpan(0, UTC_TIME_OFFSET, 0, 0));
-    }
+	set_clock();
 
 	return true;
+}
+
+void set_clock(void)
+{
+	ntp_client.update();
+	DateTime now = rtc.now();
+	unsigned long epoch_ntp = ntp_client.getEpochTime();
+	unsigned long epoch_rtc = now.unixtime();
+
+	long diff = epoch_ntp - epoch_rtc;
+
+	console.print(F("**** RTC reports time as "));
+	console.println(epoch_rtc);
+	console.print(F("**** NTP reports time as "));
+	console.println(epoch_ntp);
+	console.print(F("**** RTC vs NTP diff is "));
+	console.println(diff);
+
+	rtc.adjust(epoch_ntp);
 }
 
 bool setup_i2c_sensors(void)
@@ -729,7 +797,7 @@ bool setup_i2c_sensors(void)
 
     status = bme.begin();  
     if(!status){
-        Serial.println(F("Could not find a valid BME280 sensor, check wiring!"));
+        console.println(F("Could not find a valid BME280 sensor, check wiring!"));
         return false;
     }
 
@@ -743,7 +811,7 @@ bool setup_i2c_sensors(void)
 
 	//status = uv.begin();
 	//if(!status){
-	//	Serial.println(F("Cound not find a valid SI1145 sensor, check wiring!"));
+	//	console.println(F("Cound not find a valid SI1145 sensor, check wiring!"));
 	//}
 
 	return true;
@@ -817,20 +885,20 @@ uint16_t average_analog_read(int pin)
 
 void print_clock(DateTime *t)
 {
-	Serial.print(t->year(), DEC);
-    Serial.print('/');
-    Serial.print(t->month(), DEC);
-    Serial.print('/');
-    Serial.print(t->day(), DEC);
-    Serial.print(" (");
-    Serial.print(days_of_the_week[t->dayOfTheWeek()]);
-    Serial.print(") ");
-    Serial.print(t->hour(), DEC);
-    Serial.print(':');
-    Serial.print(t->minute(), DEC);
-    Serial.print(':');
-    Serial.print(t->second(), DEC);
-    Serial.println();
+	console.print(t->year(), DEC);
+    console.print('/');
+    console.print(t->month(), DEC);
+    console.print('/');
+    console.print(t->day(), DEC);
+    console.print(" (");
+    console.print(days_of_the_week[t->dayOfTheWeek()]);
+    console.print(") ");
+    console.print(t->hour(), DEC);
+    console.print(':');
+    console.print(t->minute(), DEC);
+    console.print(':');
+    console.print(t->second(), DEC);
+    console.println();
 }
 
 uint32_t read_battery(void)
@@ -850,10 +918,10 @@ void setup_wifi(void)
 		error(F("WiFi module not present"));
 	}
 
-	WiFi.lowPowerMode();
+	WiFi.noLowPowerMode();
 
 	Watchdog.reset();
-	Serial.println(F("Waiting 5s for descovery of networks"));
+	console.println(F("Waiting 5s for descovery of networks"));
 	delay(5000);
 	
 	Watchdog.reset();
@@ -875,20 +943,20 @@ void wifi_connect()
 	int tries = 5;
 	while(WiFi.status() != WL_CONNECTED)
 	{
-		Serial.print(F("Attempting to connect to WPA SSID: "));
-		Serial.println(wifi_ssid);
+		console.print(F("Attempting to connect to WPA SSID: "));
+		console.println(wifi_ssid);
 		WiFi.begin(wifi_ssid, wifi_password);
 		if(--tries == 0)
 		{
-			Serial.println(F("Enabling watchdog"));
+			console.println(F("Enabling watchdog"));
 			Watchdog.enable(WATCHDOG_TIME);
 		}
 		delay(5000);
 	}
 	
 	// start the WiFi OTA library with Internal Based storage
-	Serial.println(F("Setup OTA Programming ....."));
-	WiFiOTA.begin(OTA_CONNECTION_NAME, ota_password, InternalStorage);
+	console.println(F("Setup OTA Programming ....."));
+	WiFiOTA.begin(ota_name, ota_password, InternalStorage);
 
 	// Re-enable the watchdog
 	Watchdog.enable(WATCHDOG_TIME);
@@ -907,24 +975,26 @@ void mqtt_connect()
 	int tries = 50;
 	while(!mqtt_client.connected())
 	{
-		Serial.print("Attempting MQTT connection...");
+		console.print("Attempting MQTT connection...");
 		if(mqtt_client.connect(MQTT_CLIENT_NAME))
 		{
-			Serial.println(F("Connected"));
+			console.println(F("Connected"));
 			int i = 0;
 			while(mqtt_subscribe[i] != 0)
 			{
 				mqtt_client.subscribe(mqtt_subscribe[i], 1);
+				console.print(F("Subscribing to : "));
+				console.println(mqtt_subscribe[i]);
 				i++;
 			}
 		} else {
-			Serial.print(F("Connection failed, rc="));
-			Serial.print(mqtt_client.state());
-			Serial.println(F(""));
+			console.print(F("Connection failed, rc="));
+			console.print(mqtt_client.state());
+			console.println(F(""));
 			// Wait 5 seconds before retrying
 			if(--tries == 0)
 			{
-				Serial.println(F("Enabling watchdog"));
+				console.println(F("Enabling watchdog"));
 				Watchdog.enable(WATCHDOG_TIME);
 			}
 		}
@@ -1001,40 +1071,92 @@ float mean_mitsuta(int8_t *bearing, int N)
 void wifi_list_networks()
 {
 	// scan for nearby networks:
-	Serial.println("** Scan Networks **");
+	console.println("**** Scan Networks ****");
 	byte numSsid = WiFi.scanNetworks();
 
 	// print the list of networks seen:
-	Serial.print("number of available networks:");
-	Serial.println(numSsid);
+	console.print("Number of available networks: ");
+	console.println(numSsid);
 
 	// print the network number and name for each network found:
 	for (int thisNet = 0; thisNet<numSsid; thisNet++) {
-		Serial.print(thisNet);
-		Serial.print(") ");
-		Serial.print(WiFi.SSID(thisNet));
-		Serial.print("\tSignal: ");
-		Serial.print(WiFi.RSSI(thisNet));
-		Serial.print(" dBm");
-		Serial.print("\tEncryption: ");
-		Serial.println(WiFi.encryptionType(thisNet));
+		console.print(thisNet);
+		console.print(") ");
+		console.print(WiFi.SSID(thisNet));
+		console.print("\tSignal: ");
+		console.print(WiFi.RSSI(thisNet));
+		console.print(" dBm");
+		console.print("\tEncryption: ");
+		console.println(WiFi.encryptionType(thisNet));
 	}
 }
 
 void mqtt_callback(char* topic, byte* payload, unsigned int length)
 {
-	Serial.print(F("**** Message arrived ["));
-	Serial.print(topic);
-	Serial.print(F("] "));
+	console.print(F("**** Message arrived ["));
+	console.print(topic);
+	console.println(F("] "));
 
 	if(!strcmp(topic, mqtt_wifi_power_sp))
 	{
-		if(!strncmp((const char*)payload, "OFF", length))
+		if(!strncmp((const char*)payload, "HIGH", length))
 		{
 			WiFi.noLowPowerMode(); 
-		} else if(!strncmp((const char*)payload, "ON", length)) {
+			console.println(F("*** Setting WIFI Power to HIGH ***"));
+		} else if(!strncmp((const char*)payload, "LOW", length)) {
 			WiFi.lowPowerMode();
+			console.println(F("*** Setting WIFI Power to LOW ***"));
 		}
+	} else if (!strcmp(topic, mqtt_eeprom_reset_sp)) {
+		if(length == 1)
+		{
+			if(payload[0])
+			{
+				eeprom_reset();
+			}
+		}
+	} else if (!strcmp(topic, mqtt_reset_sp)) {
+		if(length == 1)
+		{
+			if(payload[0])
+			{
+				error(F("RESET"));
+			}
+		}
+	}
+}
+
+void eeprom_reset(void)
+{
+	float fzero = 0.0;
+	uint16_t izero = 0;
+
+	console.println(F("**** RESETTING EEPROM ****"));
+
+	for(int i=0; i<180; i++)
+	{
+		int rc;
+		if((rc = eeprom.writeAndVerify(EEPROM_PRESSURE + (i * sizeof(float)), 
+			                           (uint8_t *)(&fzero), 
+			                           sizeof(float))))
+		{
+			console.print(F("Error writing to EEPROM rc = "));
+			console.println(rc);
+		}
+		Watchdog.reset();
+	}
+
+	for(int i=0; i<1440; i++)
+	{
+		int rc;
+		if((rc = eeprom.writeAndVerify(EEPROM_RAIN + (i * sizeof(int16_t)), 
+			                           (uint8_t *)(&izero), 
+			                           sizeof(uint16_t))))
+		{
+			console.print(F("Error writing to EEPROM rc = "));
+			console.println(rc);
+		}
+		Watchdog.reset();
 	}
 }
 

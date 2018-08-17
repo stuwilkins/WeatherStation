@@ -12,16 +12,19 @@ ARDUINO_LIBS += Wire SPI Adafruit_INA219 MAX17043GU \
 				uCRC16Lib RTClib-master WiFi101 WiFi101OTA \
 				SD Adafruit_SleepyDog_Library Adafruit_BME280_Library \
 				Adafruit_Unified_Sensor Adafruit_SI1145_Library \
-				PubSubClient NTPClient Adafruit_ASFcore
+				PubSubClient NTPClient Adafruit_ASFcore \
+				PWFusion_AS3935_I2C eeprom_i2c RemoteConsole
+
+OTA_PASSWORD = $(shell cat ota.passwd)
+VERSION=$(shell git describe --tags --always --dirty 2> /dev/null)
 
 include /usr/local/opt/arduino-mk/Sam.mk
 
 #CC = arm-none-eabi-g++
 CXX = arm-none-eabi-g++
 
-
 upload-ota : all
 	$(ARDUINO_OTA)/bin/arduinoOTA -address 192.168.1.19 -port 65280 \
-	                              -username arduino -password bHmkHvDM3Ka*^nQz \
+	                              -username arduino -password $(OTA_PASSWORD) \
 								  -sketch build-adafruit_feather_m0/WeatherStation.bin \
 								  -upload /sketch -b -v
